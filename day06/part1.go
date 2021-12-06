@@ -39,9 +39,7 @@ func main() {
 				new_ages[8] = fish_ages[0]
 				new_ages[6] = fish_ages[0]
 			} else {
-				if fish_ages[age] > 0 {
-					new_ages[age-1] += fish_ages[age]
-				}
+				new_ages[age-1] += fish_ages[age]
 			}
 		}
 		fish_ages = new_ages
