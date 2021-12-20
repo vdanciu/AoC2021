@@ -93,6 +93,7 @@ func explode(sfnumber *Sfnumber) bool {
 		explodable.left = nil
 		explodable.right = nil
 		explodable.number = 0
+
 	}
 	return found
 }
@@ -203,8 +204,7 @@ func dup(src *Sfnumber) *Sfnumber {
 	if src == nil {
 		return nil
 	}
-	var sfnumber Sfnumber
-	sfnumber = *src
+	sfnumber := *src
 	sfnumber.left = dup(src.left)
 	sfnumber.right = dup(src.right)
 	if sfnumber.left != nil {
