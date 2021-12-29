@@ -1,0 +1,349 @@
+package main
+
+import (
+	"bufio"
+	"container/heap"
+	"fmt"
+	"log"
+	"os"
+)
+
+type position struct {
+	row, col int8
+}
+
+type leap struct {
+	position
+	distance int
+}
+
+type state struct {
+	positions [16]position
+	status    [16]int8
+}
+
+const (
+	STATUS_INIT int8 = iota
+	STATUS_STARTED
+	STATUS_PAUSED
+	STATUS_RESUMED
+	STATUS_HOME
+)
+
+type move struct {
+	state
+	cost  int
+	prev  *move
+	index int
+}
+
+// A PriorityQueue implements heap.Interface and holds Items.
+type PriorityQueue []*move
+
+func main() {
+	f, err := os.Open("input.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	scanner := bufio.NewScanner(f)
+	state := state{}
+	row := int8(1)
+	for scanner.Scan() {
+		text := scanner.Text()
+		if len(text) == 0 {
+			continue
+		}
+		if text[3] != '.' && text[3] != '#' {
+			state.add_initial_position(text[3], position{row, 2})
+			state.add_initial_position(text[5], position{row, 4})
+			state.add_initial_position(text[7], position{row, 6})
+			state.add_initial_position(text[9], position{row, 8})
+			row++
+		}
+	}
+	for i := range state.status {
+		state.status[i] = state.check_home(i)
+	}
+	fmt.Printf("initial state: %v\n", state)
+	//v := cheapest_shuffle(state)
+	v := cheapest_shuffle_leap(state)
+	fmt.Printf("%v", v)
+}
+
+func (state state) String() string {
+	s := "\n###########"
+	for row := int8(0); row < 5; row++ {
+		s += "\n"
+		for col := int8(0); col < 11; col++ {
+			if a, in := state.at_position(row, col); in {
+				s += string(a)
+			} else {
+				if row > 0 && (col != 2 && col != 4 && col != 6 && col != 8) {
+					s += "#"
+				} else {
+					s += "."
+				}
+			}
+		}
+	}
+	return s + "\n" + fmt.Sprintf("%v\n", state.status)
+}
+
+func (state *state) add_initial_position(a byte, position position) {
+	position_map := map[byte]int{
+		'A': 0,
+		'B': 1,
+		'C': 2,
+		'D': 3}
+
+	i := position_map[a] * 4
+	for ; i < 16 && state.positions[i].row != int8(0); i++ {
+	}
+	state.positions[i] = position
+}
+
+func (state *state) at_position(row, col int8) (byte, bool) {
+	index_to_char := [8]byte{'A', 'B', 'C', 'D'}
+	what := position{row, col}
+	for index, position := range state.positions {
+		if position == what {
+			return index_to_char[index/4], true
+		}
+	}
+	return '-', false
+}
+
+func (p position) valid() bool {
+	return (p.row == 0 && p.col >= 0 && p.col <= 10) ||
+		((p.row >= 1 && p.row <= 4) && (p.col == 2 || p.col == 4 || p.col == 6 || p.col == 8))
+}
+
+func (p position) free(s state) bool {
+	_, b := s.at_position(p.row, p.col)
+	return !b
+}
+
+func (s *state) check_home(i int) int8 {
+	status := s.status[i]
+
+	if home_col(i) != s.positions[i].col {
+		return status
+	} else {
+		row := s.positions[i].row
+		col := s.positions[i].col
+		if row == 0 {
+			return status
+		}
+		if row == 4 {
+			return STATUS_HOME
+		}
+		if (position{row + 1, col}).free(*s) {
+			return status
+		}
+		if s.check_home(s.id(position{row + 1, col})) == STATUS_HOME {
+			return STATUS_HOME
+		} else {
+			return status
+		}
+	}
+}
+
+func (s *state) id(p position) int {
+	for index, position := range s.positions {
+		if position == p {
+			return index
+		}
+	}
+	return -1
+}
+
+func is_sideroom(col int8) bool {
+	return col == 2 || col == 4 || col == 6 || col == 8
+}
+
+func home_col(i int) int8 {
+	return (int8(i)/4 + 1) * 2
+}
+
+func (s *state) count_home() int {
+	count := 0
+	for _, status := range s.status {
+		if status == STATUS_HOME {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *state) estimate_cost_left() int {
+	estimate := 0
+	already_home := [4]int{}
+	for i := range s.positions {
+		if s.status[i] == STATUS_HOME {
+			already_home[i/4] += 1
+		}
+	}
+	for i := range s.positions {
+		if s.status[i] != STATUS_HOME {
+			estimate += specific_cost(i) * ((5 - already_home[i/4]) / 2)
+			// if s.positions[i].row == 0 {
+			// 	continue
+			// }
+			estimate += specific_cost(i) * (int(s.positions[i].row) + abs(int(s.positions[i].col-home_col(i))))
+		}
+	}
+	return estimate
+}
+
+func (m *move) sort_cost() int {
+	return m.cost + m.estimate_cost_left()
+}
+
+func abs(a int) int {
+	if a < 0 {
+		return -a
+	}
+	return a
+}
+
+func specific_cost(i int) int {
+	return map[int]int{0: 1, 1: 10, 2: 100, 3: 1000}[i/4]
+}
+
+func cheapest_shuffle_leap(s state) int {
+	next_moves := make(PriorityQueue, 0)
+	heap.Init(&next_moves)
+	visited := map[state]bool{}
+	cost := 0
+	initial_move := move{s, 0, nil, 0}
+	heap.Push(&next_moves, &initial_move)
+	for {
+		if len(next_moves) == 0 {
+			break
+		}
+		move := heap.Pop(&next_moves).(*move)
+		if _, in := visited[move.state]; in {
+			continue
+		}
+
+		if move.count_home() == len(move.status) {
+			fmt.Printf("found!\n")
+			cost = move.cost
+			break
+		}
+
+		visited[move.state] = true
+		added := false
+		for i := range s.positions {
+			a := add_all_leaps(&next_moves, move, i, true)
+			added = added || a
+		}
+		if !added {
+			for i := range s.positions {
+				add_all_leaps(&next_moves, move, i, false)
+			}
+		}
+	}
+	return cost
+}
+
+func add_all_leaps(moves *PriorityQueue, move *move, i int, direct bool) bool {
+	if move.status[i] == STATUS_HOME {
+		return false
+	}
+	added := false
+	leaps := get_valid_leaps(move, i)
+	for _, leap := range leaps {
+		new_move := *move
+		new_move.prev = move
+		new_move.positions[i] = leap.position
+		new_move.cost += specific_cost(i) * leap.distance
+		switch new_move.status[i] {
+		case STATUS_INIT:
+			new_move.status[i] = STATUS_PAUSED
+			new_move.status[i] = new_move.check_home(i)
+		case STATUS_PAUSED:
+			new_move.status[i] = new_move.check_home(i)
+			if new_move.status[i] != STATUS_HOME {
+				continue
+			}
+		}
+		if direct && new_move.status[i] != STATUS_HOME {
+			continue
+		}
+		if !direct && new_move.status[i] == STATUS_HOME {
+			continue
+		}
+		added = true
+		// insert_before := 0
+		// for ; insert_before < len(*moves) && (*moves)[insert_before].sort_cost() < new_move.sort_cost(); insert_before++ {
+		// }
+		// *moves = append(*moves, &new_move)
+		// copy((*moves)[insert_before+1:], (*moves)[insert_before:])
+		// (*moves)[insert_before] = &new_move
+		heap.Push(moves, &new_move)
+	}
+	return added
+}
+
+func get_valid_leaps(move *move, i int) []leap {
+	src := move.positions[i]
+	leaps := []leap{}
+	queue := []leap{{src, 0}}
+	visited := map[position]bool{}
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		visited[n.position] = true
+		for _, offset := range [][2]int8{{0, -1}, {0, 1}, {1, 0}, {-1, 0}} {
+			new_leap := leap{position{n.row + offset[0], n.col + offset[1]}, n.distance + 1}
+			if !new_leap.valid() {
+				continue
+			}
+			if !new_leap.free(move.state) {
+				continue
+			}
+			if _, in := visited[new_leap.position]; in {
+				continue
+			}
+			queue = append(queue, new_leap)
+			if new_leap.row == 0 && is_sideroom(new_leap.col) {
+				continue
+			}
+			if new_leap.row != 0 && home_col(i) != new_leap.col {
+				continue
+			}
+			leaps = append(leaps, new_leap)
+		}
+	}
+	return leaps
+}
+
+func (pq PriorityQueue) Len() int { return len(pq) }
+
+func (pq PriorityQueue) Less(i, j int) bool {
+	return pq[i].sort_cost() < pq[j].sort_cost()
+}
+
+func (pq PriorityQueue) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+	pq[i].index = i
+	pq[j].index = j
+}
+
+func (pq *PriorityQueue) Push(x interface{}) {
+	n := len(*pq)
+	item := x.(*move)
+	item.index = n
+	*pq = append(*pq, item)
+}
+
+func (pq *PriorityQueue) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil  // avoid memory leak
+	item.index = -1 // for safety
+	*pq = old[0 : n-1]
+	return item
+}
